@@ -420,7 +420,7 @@ if st.session_state.selected_appliance and st.session_state.customer_profile:
                 st.write(f"{tip.get('description', 'No Description')}")
                 # Add rowid to the details string
                 rowid = tip.get('rowid', 'N/A')
-                details = f"RowID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
+                details = f"Tip ID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
                 st.caption(details)
     else:
         st.info(f"No specific tips found for '{selected}' that match the current profile.")
