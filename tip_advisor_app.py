@@ -41,6 +41,7 @@ def get_profile_for_custid(custid):
     profile = {
         "custid": custid,
         "👤 User Type": random.choice(["residential", "commercial", "res&com"]),
+        "📍 Area Type": random.choice(["Favorable", "Unfavorable", "Standard"]),
         "🧊 Freezer": random.choice(["Yes", "No"]),
         "🍽️ Dishwasher": random.choice(["Yes", "No"]),
         "💨 Dryer": random.choice(["Yes", "No"]),
@@ -58,6 +59,7 @@ def get_profile_for_custid(custid):
     }
     # Map internal names used by rules to the display names
     profile["user_type"] = profile["👤 User Type"]
+    profile["Area Type"] = profile["📍 Area Type"]
     profile["Freezer"] = profile["🧊 Freezer"]
     profile["Dishwasher"] = profile["🍽️ Dishwasher"]
     profile["Dryer"] = profile["💨 Dryer"]
@@ -392,38 +394,51 @@ if st.session_state.detected_appliances and not st.session_state.selected_applia
             # st.session_state.appliance_specific_tips = [] 
             st.rerun()
 
-# Display Tips for Selected Appliance
+# Display Tips for Selected Appliance (with added suitability filtering)
 if st.session_state.selected_appliance and st.session_state.customer_profile:
     selected = st.session_state.selected_appliance
     profile = st.session_state.customer_profile
+    customer_area_type = profile.get("Area Type", "Standard") # Get customer's area type
     
-    st.subheader(f"✨ Tips for: {selected}")
+    st.subheader(f"✨ Tips for: {selected} (Area: {customer_area_type})") # Show area type
     
     # Filter tips based on selected appliance AND profile
     appliance_specific_tips = []
-    with st.spinner(f"Finding {selected} tips..."):
+    with st.spinner(f"Finding initial {selected} tips..."):
         for tip in tips_data:
             rule = tip.get("rule", "")
-            # Check 1: Does the rule apply to the overall profile?
-            if evaluate_rule(rule, profile):
-                 # Check 2: Is the tip related to the selected appliance/category?
+            if evaluate_rule(rule, profile): # Check profile match
                  tip_category = get_appliance_from_rule(rule)
-                 if tip_category == selected:
+                 if tip_category == selected: # Check selected appliance match
                       appliance_specific_tips.append(tip)
                      
-    # Display the filtered tips
-    if appliance_specific_tips:
-        st.success(f"Found {len(appliance_specific_tips)} specific tip(s) for {selected}.")
-        for i, tip in enumerate(appliance_specific_tips):
+    # --- Apply SECOND filter based on Area Type Suitability ---
+    final_display_tips = []
+    with st.spinner(f"Filtering tips based on area suitability ({customer_area_type})..."):
+        if not appliance_specific_tips: # Skip if no tips passed first filter
+            pass
+        else:
+             for tip in appliance_specific_tips:
+                 tip_suitability = get_tip_suitability(tip) # Use the MOCKUP function
+                 # Keep tip if suitable for All or matches customer's area type
+                 if tip_suitability == "All" or tip_suitability == customer_area_type:
+                      final_display_tips.append(tip)
+
+    # Display the FINAL filtered tips
+    if final_display_tips:
+        st.success(f"Found {len(final_display_tips)} specific tip(s) for {selected} suitable for '{customer_area_type}' area.")
+        for i, tip in enumerate(final_display_tips):
              headline = tip.get('headline', 'No Headline')
-             with st.expander(f"💡 Tip {i+1}: {headline}", expanded=True): # Expand all specific tips
+             with st.expander(f"💡 Tip {i+1}: {headline}", expanded=True): 
                 st.write(f"{tip.get('description', 'No Description')}")
-                # Add rowid to the details string
                 rowid = tip.get('rowid', 'N/A')
-                details = f"Tip ID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
+                # Optionally show the simulated suitability for debugging:
+                # suitability_debug = get_tip_suitability(tip)
+                # details = f"Suitability: `{suitability_debug}` | RowID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
+                details = f"RowID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
                 st.caption(details)
     else:
-        st.info(f"No specific tips found for '{selected}' that match the current profile.")
+        st.info(f"No specific tips found for '{selected}' suitable for a '{customer_area_type}' area that also match the current profile.")
         
     # Add a button to go back / select another category
     if st.button("⬅️ Back to Categories", key="back_btn"):
@@ -434,4 +449,38 @@ if st.session_state.selected_appliance and st.session_state.customer_profile:
 # Display Chat Input ONLY if NO appliance is selected (avoid input while viewing tips)
 if not st.session_state.selected_appliance:
      if prompt := st.chat_input("Enter Customer ID (e.g., CUST123)", disabled=st.session_state.processing, key="chat_input_main"):
-         process_custid_input(prompt.strip()) 
+         process_custid_input(prompt.strip())
+
+# --- MOCKUP FUNCTION: Simulate tip suitability based on area type ---
+# In a real system, this info should be part of the tip data itself.
+def get_tip_suitability(tip):
+    """MOCKUP: Guesses tip suitability for Favorable/Unfavorable areas."""
+    headline = tip.get("headline", "").lower()
+    description = tip.get("description", "").lower()
+    text_content = headline + " " + description
+    rowid = tip.get("rowid")
+
+    # High-cost / Replacement / Installation oriented tips -> Favorable?
+    favorable_keywords = ["replace", "install new", "upgrade", "geothermal", "solar", "investment", "remodel", "purchase", "high efficiency", "energy star model"]
+    if any(keyword in text_content for keyword in favorable_keywords):
+        # Exceptions: low-cost replacements
+        if "light bulbs" in text_content or "led" in text_content or "faucet aerators" in text_content or "shower heads" in text_content:
+            return "All"
+        if rowid in [94, 19, 330]: # Programmable thermostat, Smart strips - maybe affordable?
+             return "All"
+        return "Favorable"
+
+    # Low-cost / Behavioral / Maintenance / Repair oriented tips -> Unfavorable / All?
+    unfavorable_keywords = ["unplug", "turn off", "clean", "maintain", "repair", "seal", "fix leaky", "lower setting", "reduce", "shorten", "check", "schedule", "wash full loads", "use cold water", "cover", "settings", "timer"]
+    if any(keyword in text_content for keyword in unfavorable_keywords):
+        # These seem suitable for everyone
+        return "All"
+    
+    # Specific checks (examples)
+    if rowid in [161, 162, 163]: # Mold/poison/pest remediation - essential, likely Unfavorable targeted
+         return "Unfavorable"
+    if "mobile home" in text_content: # Explicit mention
+         return "Unfavorable"
+
+    # Default: Assume suitable for All if no strong indicator found
+    return "All" 
