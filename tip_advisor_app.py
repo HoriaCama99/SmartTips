@@ -116,6 +116,38 @@ def get_appliance_from_rule(rule_str):
          
     return "General" # Default for any other unparsed rules
 
+def get_tip_suitability(tip):
+    """MOCKUP: Guesses tip suitability for Favorable/Unfavorable areas."""
+    headline = tip.get("headline", "").lower()
+    description = tip.get("description", "").lower()
+    text_content = headline + " " + description
+    rowid = tip.get("rowid")
+
+    # High-cost / Replacement / Installation oriented tips -> Favorable?
+    favorable_keywords = ["replace", "install new", "upgrade", "geothermal", "solar", "investment", "remodel", "purchase", "high efficiency", "energy star model"]
+    if any(keyword in text_content for keyword in favorable_keywords):
+        # Exceptions: low-cost replacements
+        if "light bulbs" in text_content or "led" in text_content or "faucet aerators" in text_content or "shower heads" in text_content:
+            return "All"
+        if rowid in [94, 19, 330]: # Programmable thermostat, Smart strips - maybe affordable?
+             return "All"
+        return "Favorable"
+
+    # Low-cost / Behavioral / Maintenance / Repair oriented tips -> Unfavorable / All?
+    unfavorable_keywords = ["unplug", "turn off", "clean", "maintain", "repair", "seal", "fix leaky", "lower setting", "reduce", "shorten", "check", "schedule", "wash full loads", "use cold water", "cover", "settings", "timer"]
+    if any(keyword in text_content for keyword in unfavorable_keywords):
+        # These seem suitable for everyone
+        return "All"
+    
+    # Specific checks (examples)
+    if rowid in [161, 162, 163]: # Mold/poison/pest remediation - essential, likely Unfavorable targeted
+         return "Unfavorable"
+    if "mobile home" in text_content: # Explicit mention
+         return "Unfavorable"
+
+    # Default: Assume suitable for All if no strong indicator found
+    return "All"
+
 def evaluate_rule(rule_str, profile):
     """Evaluates if a tip's rule applies to the customer profile."""
     rule_str = rule_str.strip()
@@ -449,38 +481,4 @@ if st.session_state.selected_appliance and st.session_state.customer_profile:
 # Display Chat Input ONLY if NO appliance is selected (avoid input while viewing tips)
 if not st.session_state.selected_appliance:
      if prompt := st.chat_input("Enter Customer ID (e.g., CUST123)", disabled=st.session_state.processing, key="chat_input_main"):
-         process_custid_input(prompt.strip())
-
-# --- MOCKUP FUNCTION: Simulate tip suitability based on area type ---
-# In a real system, this info should be part of the tip data itself.
-def get_tip_suitability(tip):
-    """MOCKUP: Guesses tip suitability for Favorable/Unfavorable areas."""
-    headline = tip.get("headline", "").lower()
-    description = tip.get("description", "").lower()
-    text_content = headline + " " + description
-    rowid = tip.get("rowid")
-
-    # High-cost / Replacement / Installation oriented tips -> Favorable?
-    favorable_keywords = ["replace", "install new", "upgrade", "geothermal", "solar", "investment", "remodel", "purchase", "high efficiency", "energy star model"]
-    if any(keyword in text_content for keyword in favorable_keywords):
-        # Exceptions: low-cost replacements
-        if "light bulbs" in text_content or "led" in text_content or "faucet aerators" in text_content or "shower heads" in text_content:
-            return "All"
-        if rowid in [94, 19, 330]: # Programmable thermostat, Smart strips - maybe affordable?
-             return "All"
-        return "Favorable"
-
-    # Low-cost / Behavioral / Maintenance / Repair oriented tips -> Unfavorable / All?
-    unfavorable_keywords = ["unplug", "turn off", "clean", "maintain", "repair", "seal", "fix leaky", "lower setting", "reduce", "shorten", "check", "schedule", "wash full loads", "use cold water", "cover", "settings", "timer"]
-    if any(keyword in text_content for keyword in unfavorable_keywords):
-        # These seem suitable for everyone
-        return "All"
-    
-    # Specific checks (examples)
-    if rowid in [161, 162, 163]: # Mold/poison/pest remediation - essential, likely Unfavorable targeted
-         return "Unfavorable"
-    if "mobile home" in text_content: # Explicit mention
-         return "Unfavorable"
-
-    # Default: Assume suitable for All if no strong indicator found
-    return "All" 
+         process_custid_input(prompt.strip()) 
