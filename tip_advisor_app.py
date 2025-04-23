@@ -322,17 +322,19 @@ def process_custid_input(custid):
 if st.session_state.processing and st.session_state.current_custid:
     custid_to_process = st.session_state.current_custid
     assistant_response_content = None
-    detected_appliances_list = ["General"] # Always include General
+    # detected_appliances_list = ["General"] # Moved determination logic below
+    eligible_categories = [] # Start with empty list of categories with valid tips
     
     # Display spinner within the assistant's message context
     with st.chat_message("assistant"):
-        with st.spinner(f"Analyzing profile for {custid_to_process}..."):
+        with st.spinner(f"Analyzing profile and checking available tip categories for {custid_to_process}..."):
             try:
                 customer_profile = get_profile_for_custid(custid_to_process)
                 st.session_state.customer_profile = customer_profile # Update state
+                customer_area_type = customer_profile.get("Area Type", "Standard")
 
-                # --- Detect Appliances/Categories based on Profile --- 
-                # Define profile keys that indicate appliance presence (adjust as needed)
+                # --- Determine Potential Categories based on Profile --- 
+                potential_categories = {"General"} # Always check General tips
                 appliance_presence_keys = {
                     "Freezer": "🧊 Freezer",
                     "Dishwasher": "🍽️ Dishwasher",
@@ -340,45 +342,56 @@ if st.session_state.processing and st.session_state.current_custid:
                     "Washer": "🧺 Washer",
                     "Pool": "🏊 Pool",
                     "Hot Tub": "🛁 Hot Tub",
-                    "Pool Heater": "🔥 Pool Heater Months", # Check if months > 0 ?
-                    # Add others if relevant rules exist
+                    "Pool Heater": "🔥 Pool Heater Months",
                 }
                 for appliance, profile_key in appliance_presence_keys.items():
                     profile_value = customer_profile.get(profile_key)
-                    # Simple check for "Yes" or numeric > 0 (customize logic as needed)
                     is_present = False
-                    if isinstance(profile_value, str) and profile_value.lower() == "yes":
-                         is_present = True
-                    elif isinstance(profile_value, (int, float)) and profile_value > 0:
-                         is_present = True # e.g., Pool Heater Months > 0
-                    # Add boolean True checks if profile uses booleans
-                    # elif isinstance(profile_value, bool) and profile_value is True:
-                    #      is_present = True
-                        
-                    if is_present:
-                         if appliance not in detected_appliances_list:
-                              detected_appliances_list.append(appliance)
-               
-                # Add other categories based on profile attributes used in rules
-                if customer_profile.get("💲 Rate Plan") == "TOU":
-                     if "Rate Plan" not in detected_appliances_list:
-                          detected_appliances_list.append("Rate Plan")
-                if customer_profile.get("🧱 Insulation Pre 1992") is True:
-                     if "Insulation" not in detected_appliances_list:
-                          detected_appliances_list.append("Insulation")
-                # ... add more checks for Thermostat, CFLs, Cool, Ducts etc. if desired ...
-               
-                st.session_state.detected_appliances = sorted(detected_appliances_list)
-               
-                # Prepare response: Prompt to select an appliance
-                assistant_response_content = f"OK, I've analyzed the profile for {custid_to_process}. Based on the simulation, I can offer tips in these categories. Please select one:"
+                    if isinstance(profile_value, str) and profile_value.lower() == "yes": is_present = True
+                    elif isinstance(profile_value, (int, float)) and profile_value > 0: is_present = True
+                    elif isinstance(profile_value, bool) and profile_value is True: is_present = True
+                    if is_present: potential_categories.add(appliance)
+                
+                # Add other potential non-appliance categories
+                if customer_profile.get("💲 Rate Plan") == "TOU": potential_categories.add("Rate Plan")
+                if customer_profile.get("🧱 Insulation Pre 1992") is True: potential_categories.add("Insulation")
+                # Add more based on rules/profile keys as needed...
+
+                # --- Pre-check Eligibility: Check if any tips exist for each potential category AFTER all filters --- 
+                for category in potential_categories:
+                    has_eligible_tip = False
+                    for tip in tips_data:
+                        rule = tip.get("rule", "")
+                        # Check 1: Does the rule apply to the overall profile?
+                        if evaluate_rule(rule, customer_profile):
+                            # Check 2: Is the tip related to the category being checked?
+                            tip_category = get_appliance_from_rule(rule)
+                            if tip_category == category:
+                                # Check 3: Is the tip suitable for the customer's area?
+                                tip_suitability = get_tip_suitability(tip)
+                                if tip_suitability == "All" or tip_suitability == customer_area_type:
+                                    has_eligible_tip = True
+                                    break # Found one eligible tip, no need to check more for this category
+                    
+                    # If a suitable tip was found for this category, add it to the list for button display
+                    if has_eligible_tip:
+                        eligible_categories.append(category)
+                
+                st.session_state.detected_appliances = sorted(eligible_categories) # Store the *eligible* categories
+                
+                # Prepare response: Prompt to select an appliance category
+                if st.session_state.detected_appliances:
+                     assistant_response_content = f"OK, I've analyzed the profile for {custid_to_process}. Based on the simulation and area type ({customer_area_type}), I found relevant tips in these categories. Please select one:"
+                else:
+                     # If NO categories have any suitable tips after all filtering
+                     assistant_response_content = f"Based on the profile for {custid_to_process} (Area: {customer_area_type}), I couldn't find any specifically applicable tips in our current database. General energy saving advice may still apply."
 
             except Exception as e:
                  st.error(f"An error occurred processing ID {custid_to_process}: {e}", icon="🚨")
                  assistant_response_content = f"Sorry, I couldn't process the request for {custid_to_process}. Please try again."
                  st.session_state.detected_appliances = None # Ensure buttons don't show on error
 
-    # Add the prompt message to history
+    # Add the prompt/message to history
     st.session_state.messages.append({"role": "assistant", "content": assistant_response_content})
     
     # Reset processing flags and trigger final rerun to display results/buttons
@@ -426,37 +439,29 @@ if st.session_state.detected_appliances and not st.session_state.selected_applia
             # st.session_state.appliance_specific_tips = [] 
             st.rerun()
 
-# Display Tips for Selected Appliance (with added suitability filtering)
+# Display Tips for Selected Appliance
 if st.session_state.selected_appliance and st.session_state.customer_profile:
     selected = st.session_state.selected_appliance
     profile = st.session_state.customer_profile
-    customer_area_type = profile.get("Area Type", "Standard") # Get customer's area type
+    customer_area_type = profile.get("Area Type", "Standard") 
     
-    st.subheader(f"✨ Tips for: {selected} (Area: {customer_area_type})") # Show area type
+    st.subheader(f"✨ Tips for: {selected} (Area: {customer_area_type})") 
     
-    # Filter tips based on selected appliance AND profile
-    appliance_specific_tips = []
-    with st.spinner(f"Finding initial {selected} tips..."):
+    # Filter tips based on selected appliance AND profile AND area suitability
+    # This is the same filtering logic used in the pre-check, so it's guaranteed
+    # to find at least one tip if the button was displayed.
+    final_display_tips = []
+    with st.spinner(f"Finding {selected} tips..."): # Simpler spinner message now
         for tip in tips_data:
             rule = tip.get("rule", "")
-            if evaluate_rule(rule, profile): # Check profile match
+            if evaluate_rule(rule, profile):
                  tip_category = get_appliance_from_rule(rule)
-                 if tip_category == selected: # Check selected appliance match
-                      appliance_specific_tips.append(tip)
+                 if tip_category == selected:
+                      tip_suitability = get_tip_suitability(tip)
+                      if tip_suitability == "All" or tip_suitability == customer_area_type:
+                           final_display_tips.append(tip)
                      
-    # --- Apply SECOND filter based on Area Type Suitability ---
-    final_display_tips = []
-    with st.spinner(f"Filtering tips based on area suitability ({customer_area_type})..."):
-        if not appliance_specific_tips: # Skip if no tips passed first filter
-            pass
-        else:
-             for tip in appliance_specific_tips:
-                 tip_suitability = get_tip_suitability(tip) # Use the MOCKUP function
-                 # Keep tip if suitable for All or matches customer's area type
-                 if tip_suitability == "All" or tip_suitability == customer_area_type:
-                      final_display_tips.append(tip)
-
-    # Display the FINAL filtered tips
+    # Display the filtered tips
     if final_display_tips:
         st.success(f"Found {len(final_display_tips)} specific tip(s) for {selected} suitable for '{customer_area_type}' area.")
         for i, tip in enumerate(final_display_tips):
@@ -464,13 +469,11 @@ if st.session_state.selected_appliance and st.session_state.customer_profile:
              with st.expander(f"💡 Tip {i+1}: {headline}", expanded=True): 
                 st.write(f"{tip.get('description', 'No Description')}")
                 rowid = tip.get('rowid', 'N/A')
-                # Optionally show the simulated suitability for debugging:
-                # suitability_debug = get_tip_suitability(tip)
-                # details = f"Suitability: `{suitability_debug}` | RowID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
                 details = f"RowID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
                 st.caption(details)
     else:
-        st.info(f"No specific tips found for '{selected}' suitable for a '{customer_area_type}' area that also match the current profile.")
+        # This else block should ideally not be reached if the button logic is correct
+        st.warning(f"Internal Check: No tips found for '{selected}' after filtering, but the button was shown. Please check logic.")
         
     # Add a button to go back / select another category
     if st.button("⬅️ Back to Categories", key="back_btn"):
