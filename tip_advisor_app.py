@@ -262,6 +262,8 @@ if st.sidebar.button("🔄 Start New Chat", use_container_width=True):
     st.session_state.current_custid = None
     st.session_state.customer_profile = None # Clear profile display
     st.session_state.processing = False
+    st.session_state.detected_appliances = None # <<< ADDED
+    st.session_state.selected_appliance = None # <<< ADDED
     profile_placeholder.info("Enter a Customer ID in the chat to see the simulated profile here.") # Reset sidebar message
     st.rerun() # Rerun to reflect the cleared state
 
