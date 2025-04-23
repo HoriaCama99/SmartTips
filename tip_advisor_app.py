@@ -290,16 +290,17 @@ def process_custid_input(custid):
 if st.session_state.processing and st.session_state.current_custid:
     custid_to_process = st.session_state.current_custid
     assistant_response_content = None
-    detected_appliances_list = ["General"] # Start with General again
+    # detected_appliances_list = ["General"] # Remove simple initialization
+    eligible_categories = [] # Start with empty list of categories with verified tips
     
     with st.chat_message("assistant"):
-        # Revert spinner message
-        with st.spinner(f"Analyzing profile for {custid_to_process}..."):
+        with st.spinner(f"Analyzing profile and verifying tip categories for {custid_to_process}..."):
             try:
                 customer_profile = get_profile_for_custid(custid_to_process)
                 st.session_state.customer_profile = customer_profile # Update state
 
-                # --- Revert to Simpler Appliance Detection --- 
+                # --- Determine Potential Categories based on Profile --- 
+                potential_categories = {"General"} # Always check General tips
                 appliance_presence_keys = {
                     "Freezer": "🧊 Freezer",
                     "Dishwasher": "🍽️ Dishwasher",
@@ -315,26 +316,38 @@ if st.session_state.processing and st.session_state.current_custid:
                     if isinstance(profile_value, str) and profile_value.lower() == "yes": is_present = True
                     elif isinstance(profile_value, (int, float)) and profile_value > 0: is_present = True
                     elif isinstance(profile_value, bool) and profile_value is True: is_present = True
-                    if is_present:
-                         if appliance not in detected_appliances_list:
-                              detected_appliances_list.append(appliance)
+                    if is_present: potential_categories.add(appliance)
                 
                 # Add other potential non-appliance categories based on profile
-                if customer_profile.get("💲 Rate Plan") == "TOU": 
-                    if "Rate Plan" not in detected_appliances_list: detected_appliances_list.append("Rate Plan")
-                if customer_profile.get("🧱 Insulation Pre 1992") is True:
-                     if "Insulation" not in detected_appliances_list: detected_appliances_list.append("Insulation")
+                if customer_profile.get("💲 Rate Plan") == "TOU": potential_categories.add("Rate Plan")
+                if customer_profile.get("🧱 Insulation Pre 1992") is True: potential_categories.add("Insulation")
                 # ... add more checks ...
 
-                st.session_state.detected_appliances = sorted(detected_appliances_list) # Store detected categories
+                # --- Verify Tip Availability for each Potential Category --- 
+                for category in potential_categories:
+                    has_eligible_tip = False
+                    for tip in tips_data:
+                        rule = tip.get("rule", "")
+                        # Check 1: Does the tip belong to the category being checked?
+                        tip_category = get_appliance_from_rule(rule)
+                        if tip_category == category:
+                             # Check 2: Does the rule apply to the overall profile?
+                             if evaluate_rule(rule, customer_profile):
+                                 has_eligible_tip = True
+                                 break # Found one eligible tip, no need to check more for this category
+                    
+                    # If a tip matching the profile was found for this category, add category to list for button display
+                    if has_eligible_tip:
+                        eligible_categories.append(category)
+                
+                st.session_state.detected_appliances = sorted(eligible_categories) # Store the *verified* categories
                 
                 # Prepare response: Prompt to select an appliance category
                 if st.session_state.detected_appliances:
-                     # Revert assistant message (remove Area Type reference)
-                     assistant_response_content = f"OK, I've analyzed the profile for {custid_to_process}. Based on the simulation, I can offer tips in these categories. Please select one:"
+                     assistant_response_content = f"OK, I've analyzed the profile for {custid_to_process}. Based on the simulation, I found tips relevant to these categories. Please select one:"
                 else:
-                     # This case is less likely now, but keep for safety
-                     assistant_response_content = f"Based on the profile for {custid_to_process}, I couldn't identify any specific categories for tips. General energy saving advice may still apply."
+                     # This case means absolutely no tips matched the profile for any potential category
+                     assistant_response_content = f"Based on the profile for {custid_to_process}, I couldn't find any specifically applicable tips in our current database. General energy saving advice may still apply."
 
             except Exception as e:
                  st.error(f"An error occurred processing ID {custid_to_process}: {e}", icon="🚨")
@@ -394,26 +407,23 @@ if st.session_state.selected_appliance and st.session_state.customer_profile:
     selected = st.session_state.selected_appliance
     profile = st.session_state.customer_profile
     
-    # Revert subheader
     st.subheader(f"✨ Tips for: {selected}") 
     
-    # --- Revert Filtering Logic --- 
-    # Filter tips based ONLY on selected appliance AND profile rule
+    # --- Filter tips based ONLY on selected appliance AND profile rule ---
+    # This filtering logic now matches the verification logic, ensuring tips are found.
     appliance_specific_tips = []
     with st.spinner(f"Finding {selected} tips..."): 
         for tip in tips_data:
             rule = tip.get("rule", "")
-            if evaluate_rule(rule, profile):
-                 tip_category = get_appliance_from_rule(rule)
-                 if tip_category == selected:
-                      # REMOVED suitability check
-                      # tip_suitability = get_tip_suitability(tip)
-                      # if tip_suitability == "All" or tip_suitability == customer_area_type:
+            tip_category = get_appliance_from_rule(rule)
+            # Check category first (slightly more efficient)
+            if tip_category == selected:
+                # Then check if the rule matches the profile
+                if evaluate_rule(rule, profile):
                       appliance_specific_tips.append(tip)
                      
-    # Display the filtered tips (using appliance_specific_tips directly)
+    # Display the filtered tips
     if appliance_specific_tips:
-        # Revert success message
         st.success(f"Found {len(appliance_specific_tips)} specific tip(s) for {selected}.")
         for i, tip in enumerate(appliance_specific_tips):
              headline = tip.get('headline', 'No Headline')
@@ -423,8 +433,8 @@ if st.session_state.selected_appliance and st.session_state.customer_profile:
                 details = f"RowID: `{rowid}` | Rule: `{tip.get('rule', 'N/A')}` | Category: `{tip.get('category', 'N/A')}` | Fuel: `{tip.get('fuel', 'N/A') or 'Any'}`"
                 st.caption(details)
     else:
-        # This message might appear again now if profile rules exclude all tips for a category
-        st.info(f"No specific tips found for '{selected}' that match the current profile.")
+        # This *should* not be reached now due to the verification step.
+        st.warning(f"Internal Check: No tips found for '{selected}' after filtering, although the button was displayed. Please review verification logic.")
         
     # Add a button to go back / select another category
     if st.button("⬅️ Back to Categories", key="back_btn"):
